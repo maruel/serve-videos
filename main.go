@@ -51,7 +51,7 @@ function add(i, file) {
 		'onloadstart="this.playbackRate=2;" ' +
 		'controlslist="nodownload noremoteplayback" ' +
 		'disablepictureinpicture disableremoteplayback ' +
-		'muted><source src="/raw/' + file + '" /></video>';
+		'muted><source src="raw/' + file + '" /></video>';
 	parent.insertAdjacentElement("afterbegin", d);
 	// In order: parent.appendChild(d);
 	return document.getElementById("vid" + i);
@@ -92,7 +92,7 @@ var listTmpl = template.Must(template.New("").Parse(`<!DOCTYPE HTML>
 <div>
 <ul>
 {{range $k, $v := .}}
-	<li><a href="/raw/{{$v}}" target="_blank" rel="noopener noreferrer">{{$v}}</a></li>
+	<li><a href="raw/{{$v}}" target="_blank" rel="noopener noreferrer">{{$v}}</a></li>
 {{end}}
 </ul>
 </div>
