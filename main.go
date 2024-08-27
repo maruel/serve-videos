@@ -1,0 +1,227 @@
+// Copyright 2024 Marc-Antoine Ruel. All rights reserved.
+// Use of this source code is governed under the Apache License, Version 2.0
+// that can be found in the LICENSE file.
+
+// serve-videos serves a directory of videos over HTTP.
+package main
+
+import (
+	"flag"
+	"fmt"
+	"html/template"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/lmittmann/tint"
+	"github.com/mattn/go-colorable"
+	"github.com/mattn/go-isatty"
+	"gopkg.in/fsnotify.v1"
+)
+
+func getWd() string {
+	wd, _ := os.Getwd()
+	return wd
+}
+
+var rootTmpl = template.Must(template.New("").Parse(`<!DOCTYPE HTML>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+video {
+	width: 100%;
+}
+</style>
+<div id=players></div>
+<script>
+function add(i, file) {
+	let parent = document.getElementById("players");
+	let d = document.createElement("div");
+	d.id = "d" + i;
+	d.innerHTML = '' +
+		file +
+		'<video id="vid' + i + '" controls preload="none" ' +
+		'onloadstart="this.playbackRate=2;" ' +
+		'controlslist="nodownload noremoteplayback" ' +
+		'disablepictureinpicture disableremoteplayback ' +
+		'muted><source src="/raw/' + file + '" /></video>';
+	parent.insertAdjacentElement("afterbegin", d);
+	// In order: parent.appendChild(d);
+	return document.getElementById("vid" + i);
+}
+
+function addall() {
+	const observer = new IntersectionObserver((entries, observer) => {
+		entries.forEach(entry => {
+			let target = entry.target;
+			if (entry.isIntersecting) {
+				if (target.paused) {
+					console.log('Element ' + target.id + ' is now visible in the viewport: starting');
+					target.play();
+				}
+			} else {
+				if (!target.paused) {
+					console.log('Element ' + target.id + ' is not visible in the viewport anymore: pausing');
+					target.pause();
+				}
+			}
+		});
+	});
+	const files = {{.}};
+	for (let i in files) {
+		let child = add(i, files[i]);
+		observer.observe(child);
+	}
+}
+
+addall();
+</script>
+`))
+
+var listTmpl = template.Must(template.New("").Parse(`<!DOCTYPE HTML>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+</style>
+<div>
+<ul>
+{{range $k, $v := .}}
+	<li><a href="/raw/{{$v}}" target="_blank" rel="noopener noreferrer">{{$v}}</a></li>
+{{end}}
+</ul>
+</div>
+`))
+
+func getFiles(root string, exts []string) (*fsnotify.Watcher, []string) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		slog.Error("failed to create a watcher", "error", err)
+		os.Exit(1)
+	}
+	var files []string
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if d.IsDir() {
+			if err2 := w.Add(path); err2 != nil {
+				// Ignore, it's not a big deal.
+				//slog.Error("failed to add path", "path", path, "error", err2)
+			}
+		} else {
+			for _, ext := range exts {
+				if strings.HasSuffix(path, ext) {
+					files = append(files, path)
+					break
+				}
+			}
+		}
+		return nil
+	})
+	sort.Strings(files)
+	slog.Info("done parsing", "num_files", len(files))
+	return w, files
+}
+
+type stringsFlag []string
+
+func (s *stringsFlag) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringsFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+func main() {
+	logger := slog.New(tint.NewHandler(colorable.NewColorable(os.Stderr), &tint.Options{
+		Level:      slog.LevelDebug,
+		TimeFormat: time.TimeOnly,
+		NoColor:    !isatty.IsTerminal(os.Stderr.Fd()),
+	}))
+	slog.SetDefault(logger)
+	port := flag.Int("port", 8010, "port number")
+	var extsArg stringsFlag
+	flag.Var(&extsArg, "e", "extensions")
+	//quiet := flag.Bool("q", false, "don't print log lines")
+	root := flag.String("root", getWd(), "root directory")
+	flag.Parse()
+
+	if flag.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "Unexpected argument\n")
+		return
+	}
+
+	if len(extsArg) == 0 {
+		extsArg = []string{"mkv", "mp4"}
+	}
+	slog.Info("looking for files", "root", *root, "ext", strings.Join(extsArg, ","))
+	mu := sync.Mutex{}
+	wat, files := getFiles(*root, extsArg)
+
+	go func() {
+		e := <-wat.Events
+		slog.Info("event", "op", e.Op, "name", e.Name)
+		_ = wat.Close()
+		mu.Lock()
+		wat, files = getFiles(*root, extsArg)
+		mu.Unlock()
+	}()
+
+	m := http.ServeMux{}
+	// Videos
+	m.HandleFunc("GET /raw/", func(w http.ResponseWriter, req *http.Request) {
+		prefix := "/raw"
+		if runtime.GOOS == "windows" {
+			prefix = "/raw/"
+		}
+		path, err := url.QueryUnescape(req.URL.Path)
+		if err != nil {
+			http.Error(w, "Invalid path", 404)
+			return
+		}
+		f := path[len(prefix):]
+		mu.Lock()
+		// Only allow files in the list we have.
+		i := sort.SearchStrings(files, f)
+		found := i < len(files) && files[i] == f
+		mu.Unlock()
+		if !found {
+			slog.Info("http", "f", f)
+			http.Error(w, "Invalid path", 404)
+			return
+		}
+		http.ServeFile(w, req, f)
+	})
+
+	// HTML
+	m.HandleFunc("GET /list", func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		tmp := make([]string, len(files))
+		copy(tmp, files)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = listTmpl.Execute(w, tmp)
+	})
+	m.HandleFunc("GET /", func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		tmp := make([]string, len(files))
+		copy(tmp, files)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = rootTmpl.Execute(w, files)
+	})
+	s := &http.Server{
+		Addr:           fmt.Sprintf(":%d", *port),
+		Handler:        &m,
+		ReadTimeout:    10. * time.Second,
+		WriteTimeout:   time.Hour,
+		MaxHeaderBytes: http.DefaultMaxHeaderBytes,
+	}
+	slog.Info("serving", "port", *port)
+	_ = s.ListenAndServe()
+}
