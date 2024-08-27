@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -41,12 +40,20 @@ video {
 </style>
 <div id=players></div>
 <script>
+const ESC = {'<': '&lt;', '>': '&gt;', '"': '&quot;', '&': '&amp;'}
+function escapeChar(a) {
+  return ESC[a] || a;
+}
+function escape(s) {
+  return s.replace(/[<>"&]/g, escapeChar);
+}
+
 function add(i, file) {
 	let parent = document.getElementById("players");
 	let d = document.createElement("div");
 	d.id = "d" + i;
 	d.innerHTML = '' +
-		file +
+		'<a href="raw/' + escape(file) + '" target=_blank>' + file + '</a>' +
 		'<video id="vid' + i + '" controls preload="none" ' +
 		'onloadstart="this.playbackRate=2;" ' +
 		'controlslist="nodownload noremoteplayback" ' +
@@ -63,12 +70,24 @@ function addall() {
 			let target = entry.target;
 			if (entry.isIntersecting) {
 				if (target.paused) {
-					console.log('Element ' + target.id + ' is now visible in the viewport: starting');
-					target.play();
+					//console.log('Element ' + target.id + ' is now visible in the viewport: starting');
+					// Only auto-start after being visible for 1s, to reduce
+					// strain on the server when scrolling fast.
+					target.playTimeout = setTimeout(() => {
+						target.play();
+						target.playTimeout = null;
+					}, 1000);
 				}
 			} else {
+				if (target.playTimeout) {
+					clearTimeout(target.playTimeout);
+					target.playTimeout = null;
+				}
 				if (!target.paused) {
-					console.log('Element ' + target.id + ' is not visible in the viewport anymore: pausing');
+					//console.log('Element ' + target.id + ' is not visible in the viewport anymore: pausing');
+					// This may fire warnings in the dev console because pause()
+					// is called before the play() promise is executed. We
+					// don't care.
 					target.pause();
 				}
 			}
@@ -105,6 +124,7 @@ func getFiles(root string, exts []string) (*fsnotify.Watcher, []string) {
 		os.Exit(1)
 	}
 	var files []string
+	offset := len(root) + 1
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if d.IsDir() {
 			if err2 := w.Add(path); err2 != nil {
@@ -114,7 +134,7 @@ func getFiles(root string, exts []string) (*fsnotify.Watcher, []string) {
 		} else {
 			for _, ext := range exts {
 				if strings.HasSuffix(path, ext) {
-					files = append(files, path)
+					files = append(files, path[offset:])
 					break
 				}
 			}
@@ -147,7 +167,6 @@ func main() {
 	port := flag.Int("port", 8010, "port number")
 	var extsArg stringsFlag
 	flag.Var(&extsArg, "e", "extensions")
-	//quiet := flag.Bool("q", false, "don't print log lines")
 	root := flag.String("root", getWd(), "root directory")
 	flag.Parse()
 
@@ -175,16 +194,12 @@ func main() {
 	m := http.ServeMux{}
 	// Videos
 	m.HandleFunc("GET /raw/", func(w http.ResponseWriter, req *http.Request) {
-		prefix := "/raw"
-		if runtime.GOOS == "windows" {
-			prefix = "/raw/"
-		}
 		path, err := url.QueryUnescape(req.URL.Path)
 		if err != nil {
 			http.Error(w, "Invalid path", 404)
 			return
 		}
-		f := path[len(prefix):]
+		f := path[len("/raw/"):]
 		mu.Lock()
 		// Only allow files in the list we have.
 		i := sort.SearchStrings(files, f)
@@ -195,7 +210,7 @@ func main() {
 			http.Error(w, "Invalid path", 404)
 			return
 		}
-		http.ServeFile(w, req, f)
+		http.ServeFile(w, req, filepath.Join(*root, f))
 	})
 
 	// HTML
