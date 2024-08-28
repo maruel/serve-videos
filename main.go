@@ -210,6 +210,7 @@ func main() {
 			http.Error(w, "Invalid path", 404)
 			return
 		}
+		w.Header().Set("Cache-Control", "public, max-age=86400")
 		http.ServeFile(w, req, filepath.Join(*root, f))
 	})
 
@@ -219,7 +220,11 @@ func main() {
 		tmp := make([]string, len(files))
 		copy(tmp, files)
 		mu.Unlock()
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		h := w.Header()
+		h.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+		h.Set("Pragma", "no-cache")
+		h.Set("Expires", "0")
+		h.Set("Content-Type", "text/html; charset=utf-8")
 		_ = listTmpl.Execute(w, tmp)
 	})
 	m.HandleFunc("GET /", func(w http.ResponseWriter, req *http.Request) {
@@ -227,7 +232,11 @@ func main() {
 		tmp := make([]string, len(files))
 		copy(tmp, files)
 		mu.Unlock()
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		h := w.Header()
+		h.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+		h.Set("Pragma", "no-cache")
+		h.Set("Expires", "0")
+		h.Set("Content-Type", "text/html; charset=utf-8")
 		_ = rootTmpl.Execute(w, files)
 	})
 	s := &http.Server{
