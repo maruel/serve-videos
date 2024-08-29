@@ -38,6 +38,7 @@ video {
 	width: 100%;
 }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.15/hls.min.js"></script>
 <div id=players></div>
 <script>
 const ESC = {'<': '&lt;', '>': '&gt;', '"': '&quot;', '&': '&amp;'}
@@ -58,7 +59,18 @@ function add(i, file) {
 		'onloadstart="this.playbackRate=2;" ' +
 		'controlslist="nodownload noremoteplayback" ' +
 		'disablepictureinpicture disableremoteplayback ' +
-		'muted><source src="raw/' + file + '" /></video>';
+		'muted><source src="raw/' + escape(file) + '" /></video>';
+	if (file.endsWith(".m3u8")) {
+		if (Hls.isSupported()) {
+			let video = d.getElementsByTagName('video')[0];
+			let hls = new Hls();
+			hls.loadSource("raw/" + file);
+			hls.attachMedia(video);
+		} else {
+			console.log("welp for " + file);
+			return null;
+		}
+	}
 	parent.insertAdjacentElement("afterbegin", d);
 	// In order: parent.appendChild(d);
 	return document.getElementById("vid" + i);
@@ -95,8 +107,12 @@ function addall() {
 	});
 	const files = {{.}};
 	for (let i in files) {
-		let child = add(i, files[i]);
-		observer.observe(child);
+		if (!files[i].endsWith(".ts")) {
+			let child = add(i, files[i]);
+			if (child) {
+				observer.observe(child);
+			}
+		}
 	}
 }
 
@@ -176,7 +192,7 @@ func main() {
 	}
 
 	if len(extsArg) == 0 {
-		extsArg = []string{"mkv", "mp4"}
+		extsArg = []string{"m3u8", "mkv", "mp4", "ts"}
 	}
 	slog.Info("looking for files", "root", *root, "ext", strings.Join(extsArg, ","))
 	mu := sync.Mutex{}

@@ -1,6 +1,7 @@
 # Serves a directory of videos over HTTP
 
-Mainly to see video recordings from motion.
+Mainly to see video recordings from motion. Supports HLS (m3u8), MP4 and MKV.
+
 
 ## Installation
 
