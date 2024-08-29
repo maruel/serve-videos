@@ -232,7 +232,6 @@ func main() {
 			h.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 			h.Set("Pragma", "no-cache")
 			h.Set("Expires", "0")
-			h.Set("Content-Type", "text/html; charset=utf-8")
 		} else {
 			h.Set("Cache-Control", "public, max-age=86400")
 		}
