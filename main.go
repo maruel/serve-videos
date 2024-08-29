@@ -201,6 +201,7 @@ func main() {
 	go func() {
 		for e := range wat.Events {
 			slog.Info("event", "op", e.Op, "name", e.Name)
+			_ = wat.Close()
 			mu.Lock()
 			wat, files = getFiles(*root, extsArg)
 			mu.Unlock()
