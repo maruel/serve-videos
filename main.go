@@ -145,7 +145,7 @@ func getFiles(root string, exts []string) (*fsnotify.Watcher, []string) {
 		if d.IsDir() {
 			if err2 := w.Add(path); err2 != nil {
 				// Ignore, it's not a big deal.
-				//slog.Error("failed to add path", "path", path, "error", err2)
+				slog.Error("watcher", "path", path, "error", err2)
 			}
 		} else {
 			for _, ext := range exts {
@@ -199,12 +199,12 @@ func main() {
 	wat, files := getFiles(*root, extsArg)
 
 	go func() {
-		e := <-wat.Events
-		slog.Info("event", "op", e.Op, "name", e.Name)
-		_ = wat.Close()
-		mu.Lock()
-		wat, files = getFiles(*root, extsArg)
-		mu.Unlock()
+		for e := range wat.Events {
+			slog.Info("event", "op", e.Op, "name", e.Name)
+			mu.Lock()
+			wat, files = getFiles(*root, extsArg)
+			mu.Unlock()
+		}
 	}()
 
 	m := http.ServeMux{}
