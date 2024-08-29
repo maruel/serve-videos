@@ -226,7 +226,16 @@ func main() {
 			http.Error(w, "Invalid path", 404)
 			return
 		}
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		// Cache for a long time, the exception is m3u8 since it could be a live
+		// playlist.
+		if h := w.Header(); strings.HasSuffix(f, ".m3u8") {
+			h.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			h.Set("Pragma", "no-cache")
+			h.Set("Expires", "0")
+			h.Set("Content-Type", "text/html; charset=utf-8")
+		} else {
+			h.Set("Cache-Control", "public, max-age=86400")
+		}
 		http.ServeFile(w, req, filepath.Join(*root, f))
 	})
 
