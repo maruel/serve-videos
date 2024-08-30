@@ -169,7 +169,7 @@ func mainImpl() error {
 		h.Set("Pragma", "no-cache")
 		h.Set("Expires", "0")
 		h.Set("Content-Type", "text/html; charset=utf-8")
-		if _, err2 := w.Write(listHTML); err != nil {
+		if _, err2 := w.Write(listHTML); err2 != nil {
 			return
 		}
 		_ = dataTmpl.Execute(w, map[string]any{"files": tmp})
@@ -184,7 +184,7 @@ func mainImpl() error {
 		h.Set("Pragma", "no-cache")
 		h.Set("Expires", "0")
 		h.Set("Content-Type", "text/html; charset=utf-8")
-		if _, err2 := w.Write(rootHTML); err != nil {
+		if _, err2 := w.Write(rootHTML); err2 != nil {
 			return
 		}
 		_ = dataTmpl.Execute(w, map[string]any{"files": tmp})
