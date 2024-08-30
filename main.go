@@ -35,26 +35,24 @@ func getWd() string {
 	return wd
 }
 
-var rootTmpl = template.Must(template.New("").Parse(`<!DOCTYPE HTML>
+var rootHTML = []byte(`<!DOCTYPE HTML>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
 video {
 	width: 100%;
 }
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.15/hls.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.15/hls.min.js" defer></script>
 <div id=players></div>
 <script>
+"use strict";
 const ESC = {'<': '&lt;', '>': '&gt;', '"': '&quot;', '&': '&amp;'}
-function escapeChar(a) {
-  return ESC[a] || a;
-}
-function escape(s) {
-  return s.replace(/[<>"&]/g, escapeChar);
-}
+function escapeChar(a) { return ESC[a] || a; }
+function escape(s) { return s.replace(/[<>"&]/g, escapeChar); }
+
+let parent = document.getElementById("players");
 
 function add(i, file) {
-	let parent = document.getElementById("players");
 	let d = document.createElement("div");
 	d.id = "d" + i;
 	d.innerHTML = '' +
@@ -80,7 +78,7 @@ function add(i, file) {
 	return document.getElementById("vid" + i);
 }
 
-function addall() {
+function addall(files) {
 	const observer = new IntersectionObserver((entries, observer) => {
 		entries.forEach(entry => {
 			let target = entry.target;
@@ -109,7 +107,6 @@ function addall() {
 			}
 		});
 	});
-	const files = {{.}};
 	for (let i in files) {
 		if (!files[i].endsWith(".ts")) {
 			let child = add(i, files[i]);
@@ -120,22 +117,44 @@ function addall() {
 	}
 }
 
-addall();
-</script>
-`))
+// A global "data" must be defined by injecting data as a script down below.
+document.addEventListener('DOMContentLoaded', ()=> {
+	addall(data.files);
+});
+</script>`)
 
-var listTmpl = template.Must(template.New("").Parse(`<!DOCTYPE HTML>
+var listHTML = []byte(`<!DOCTYPE HTML>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-</style>
-<div>
-<ul>
-{{range $k, $v := .}}
-	<li><a href="raw/{{$v}}" target="_blank" rel="noopener noreferrer">{{$v}}</a></li>
-{{end}}
-</ul>
-</div>
-`))
+<div><ul id=parent></ul></div>
+<script>
+"use strict";
+const ESC = {'<': '&lt;', '>': '&gt;', '"': '&quot;', '&': '&amp;'}
+function escapeChar(a) { return ESC[a] || a; }
+function escape(s) { return s.replace(/[<>"&]/g, escapeChar); }
+
+let parent = document.getElementById("parent");
+
+function add(i, file) {
+	let d = document.createElement("li");
+	d.id = "d" + i;
+	d.innerHTML = '<a href="raw/' + escape(file) + '" target="_blank" rel="noopener noreferrer">' + escape(file) + '</a>';
+	parent.appendChild(d);
+}
+
+function addall(files) {
+	for (let i in files) {
+		add(i, files[i]);
+	}
+}
+
+// A global "data" must be defined by injecting data as a script down below.
+document.addEventListener('DOMContentLoaded', ()=> {
+	addall(data.files);
+});
+</script>`)
+
+// Injected data to speed up page load, versus having to do an API call.
+var dataTmpl = template.Must(template.New("").Parse("<script>'use strict';const data = {{.}};</script>"))
 
 func getFiles(root string, exts []string) (*fsnotify.Watcher, []string, error) {
 	w, err := fsnotify.NewWatcher()
@@ -195,6 +214,7 @@ func mainImpl() error {
 	if len(extsArg) == 0 {
 		extsArg = []string{"m3u8", "mkv", "mp4", "ts"}
 	}
+	*root = filepath.Clean(*root)
 	slog.Info("looking for files", "root", *root, "ext", strings.Join(extsArg, ","))
 	mu := sync.Mutex{}
 	wat, files, err := getFiles(*root, extsArg)
@@ -257,7 +277,10 @@ func mainImpl() error {
 		h.Set("Pragma", "no-cache")
 		h.Set("Expires", "0")
 		h.Set("Content-Type", "text/html; charset=utf-8")
-		_ = listTmpl.Execute(w, tmp)
+		if _, err := w.Write(listHTML); err != nil {
+			return
+		}
+		_ = dataTmpl.Execute(w, map[string]any{"files": tmp})
 	})
 	m.HandleFunc("GET /", func(w http.ResponseWriter, req *http.Request) {
 		mu.Lock()
@@ -269,7 +292,10 @@ func mainImpl() error {
 		h.Set("Pragma", "no-cache")
 		h.Set("Expires", "0")
 		h.Set("Content-Type", "text/html; charset=utf-8")
-		_ = rootTmpl.Execute(w, files)
+		if _, err := w.Write(rootHTML); err != nil {
+			return
+		}
+		_ = dataTmpl.Execute(w, map[string]any{"files": tmp})
 	})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
