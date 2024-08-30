@@ -30,11 +30,6 @@ import (
 	"gopkg.in/fsnotify.v1"
 )
 
-func getWd() string {
-	wd, _ := os.Getwd()
-	return wd
-}
-
 var rootHTML = []byte(`<!DOCTYPE HTML>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
@@ -205,7 +200,7 @@ func mainImpl() error {
 	addr := flag.String("addr", ":8010", "address and port to listen to")
 	var extsArg stringsFlag
 	flag.Var(&extsArg, "e", "extensions")
-	root := flag.String("root", getWd(), "root directory")
+	root := flag.String("root", ".", "root directory")
 	flag.Parse()
 
 	if flag.NArg() != 0 {
@@ -214,7 +209,15 @@ func mainImpl() error {
 	if len(extsArg) == 0 {
 		extsArg = []string{"m3u8", "mkv", "mp4", "ts"}
 	}
-	*root = filepath.Clean(*root)
+	var err error
+	if *root, err = filepath.Abs(filepath.Clean(*root)); err != nil {
+		return err
+	}
+	if fi, err := os.Stat(*root); err != nil {
+		return fmt.Errorf("-root %q is unusable: %w", *root, err)
+	} else if !fi.IsDir() {
+		return fmt.Errorf("-root %q is not a directory", *root)
+	}
 	slog.Info("looking for files", "root", *root, "ext", strings.Join(extsArg, ","))
 	mu := sync.Mutex{}
 	wat, files, err := getFiles(*root, extsArg)
