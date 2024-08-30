@@ -199,11 +199,14 @@ func main() {
 	wat, files := getFiles(*root, extsArg)
 
 	go func() {
-		for e := range wat.Events {
+		for {
+			e := <-wat.Events
 			slog.Info("event", "op", e.Op, "name", e.Name)
+			wat2, files2 := getFiles(*root, extsArg)
 			_ = wat.Close()
+			wat = wat2
 			mu.Lock()
-			wat, files = getFiles(*root, extsArg)
+			files = files2
 			mu.Unlock()
 		}
 	}()
