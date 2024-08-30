@@ -102,8 +102,8 @@ func mainImpl() error {
 	if *root, err = filepath.Abs(filepath.Clean(*root)); err != nil {
 		return err
 	}
-	if fi, err := os.Stat(*root); err != nil {
-		return fmt.Errorf("-root %q is unusable: %w", *root, err)
+	if fi, err2 := os.Stat(*root); err2 != nil {
+		return fmt.Errorf("-root %q is unusable: %w", *root, err2)
 	} else if !fi.IsDir() {
 		return fmt.Errorf("-root %q is not a directory", *root)
 	}
