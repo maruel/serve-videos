@@ -140,7 +140,7 @@ var listTmpl = template.Must(template.New("").Parse(`<!DOCTYPE HTML>
 func getFiles(root string, exts []string) (*fsnotify.Watcher, []string, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create a watcher for %q: %w", root, w)
+		return nil, nil, fmt.Errorf("failed to create a watcher for %q: %w", root, err)
 	}
 	var files []string
 	offset := len(root) + 1
