@@ -218,8 +218,8 @@ func mainImpl() error {
 	m := http.ServeMux{}
 	// Videos
 	m.HandleFunc("GET /raw/", func(w http.ResponseWriter, req *http.Request) {
-		path, err := url.QueryUnescape(req.URL.Path)
-		if err != nil {
+		path, err2 := url.QueryUnescape(req.URL.Path)
+		if err2 != nil {
 			http.Error(w, "Invalid path", 404)
 			return
 		}
@@ -286,7 +286,7 @@ func mainImpl() error {
 	slog.Info("serving", "addr", l.Addr())
 	go s.Serve(l)
 	<-ctx.Done()
-	s.Shutdown(context.Background())
+	_ = s.Shutdown(context.Background())
 	return nil
 }
 
