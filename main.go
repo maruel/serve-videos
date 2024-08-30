@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -30,123 +31,11 @@ import (
 	"gopkg.in/fsnotify.v1"
 )
 
-var rootHTML = []byte(`<!DOCTYPE HTML>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-video {
-	width: 100%;
-}
-</style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.15/hls.min.js" defer></script>
-<div id=players></div>
-<script>
-"use strict";
-const ESC = {'<': '&lt;', '>': '&gt;', '"': '&quot;', '&': '&amp;'}
-function escapeChar(a) { return ESC[a] || a; }
-function escape(s) { return s.replace(/[<>"&]/g, escapeChar); }
+//go:embed html/root.html
+var rootHTML []byte
 
-let parent = document.getElementById("players");
-
-function add(i, file) {
-	let d = document.createElement("div");
-	d.id = "d" + i;
-	d.innerHTML = '' +
-		'<a href="raw/' + escape(file) + '" target=_blank>' + file + '</a>' +
-		'<video id="vid' + i + '" controls preload="none" ' +
-		'onloadstart="this.playbackRate=2;" ' +
-		'controlslist="nodownload noremoteplayback" ' +
-		'disablepictureinpicture disableremoteplayback ' +
-		'muted><source src="raw/' + escape(file) + '" /></video>';
-	if (file.endsWith(".m3u8")) {
-		if (Hls.isSupported()) {
-			let video = d.getElementsByTagName('video')[0];
-			let hls = new Hls();
-			hls.loadSource("raw/" + file);
-			hls.attachMedia(video);
-		} else {
-			console.log("welp for " + file);
-			return null;
-		}
-	}
-	parent.insertAdjacentElement("afterbegin", d);
-	// In order: parent.appendChild(d);
-	return document.getElementById("vid" + i);
-}
-
-function addall(files) {
-	const observer = new IntersectionObserver((entries, observer) => {
-		entries.forEach(entry => {
-			let target = entry.target;
-			if (entry.isIntersecting) {
-				if (target.paused) {
-					//console.log('Element ' + target.id + ' is now visible in the viewport: starting');
-					// Only auto-start after being visible for 1s, to reduce
-					// strain on the server when scrolling fast.
-					target.playTimeout = setTimeout(() => {
-						target.play();
-						target.playTimeout = null;
-					}, 1000);
-				}
-			} else {
-				if (target.playTimeout) {
-					clearTimeout(target.playTimeout);
-					target.playTimeout = null;
-				}
-				if (!target.paused) {
-					//console.log('Element ' + target.id + ' is not visible in the viewport anymore: pausing');
-					// This may fire warnings in the dev console because pause()
-					// is called before the play() promise is executed. We
-					// don't care.
-					target.pause();
-				}
-			}
-		});
-	});
-	for (let i in files) {
-		if (!files[i].endsWith(".ts")) {
-			let child = add(i, files[i]);
-			if (child) {
-				observer.observe(child);
-			}
-		}
-	}
-}
-
-// A global "data" must be defined by injecting data as a script down below.
-document.addEventListener('DOMContentLoaded', ()=> {
-	addall(data.files);
-});
-</script>`)
-
-var listHTML = []byte(`<!DOCTYPE HTML>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<div><ul id=parent></ul></div>
-<script>
-"use strict";
-const ESC = {'<': '&lt;', '>': '&gt;', '"': '&quot;', '&': '&amp;'}
-function escapeChar(a) { return ESC[a] || a; }
-function escape(s) { return s.replace(/[<>"&]/g, escapeChar); }
-
-let parent = document.getElementById("parent");
-
-function add(i, file) {
-	let d = document.createElement("li");
-	d.id = "d" + i;
-	d.innerHTML = '<a href="raw/' + escape(file) + '" target="_blank" rel="noopener noreferrer">' + escape(file) + '</a>';
-	parent.appendChild(d);
-}
-
-function addall(files) {
-	for (let i in files) {
-		add(i, files[i]);
-	}
-}
-
-// A global "data" must be defined by injecting data as a script down below.
-document.addEventListener('DOMContentLoaded', ()=> {
-	addall(data.files);
-});
-</script>`)
+//go:embed html/list.html
+var listHTML []byte
 
 // Injected data to speed up page load, versus having to do an API call.
 var dataTmpl = template.Must(template.New("").Parse("<script>'use strict';const data = {{.}};</script>"))
@@ -280,7 +169,7 @@ func mainImpl() error {
 		h.Set("Pragma", "no-cache")
 		h.Set("Expires", "0")
 		h.Set("Content-Type", "text/html; charset=utf-8")
-		if _, err := w.Write(listHTML); err != nil {
+		if _, err2 := w.Write(listHTML); err != nil {
 			return
 		}
 		_ = dataTmpl.Execute(w, map[string]any{"files": tmp})
@@ -295,7 +184,7 @@ func mainImpl() error {
 		h.Set("Pragma", "no-cache")
 		h.Set("Expires", "0")
 		h.Set("Content-Type", "text/html; charset=utf-8")
-		if _, err := w.Write(rootHTML); err != nil {
+		if _, err2 := w.Write(rootHTML); err != nil {
 			return
 		}
 		_ = dataTmpl.Execute(w, map[string]any{"files": tmp})
