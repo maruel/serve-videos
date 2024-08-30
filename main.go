@@ -6,14 +6,18 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -133,11 +137,10 @@ var listTmpl = template.Must(template.New("").Parse(`<!DOCTYPE HTML>
 </div>
 `))
 
-func getFiles(root string, exts []string) (*fsnotify.Watcher, []string) {
+func getFiles(root string, exts []string) (*fsnotify.Watcher, []string, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
-		slog.Error("failed to create a watcher", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("failed to create a watcher for %q: %w", root, w)
 	}
 	var files []string
 	offset := len(root) + 1
@@ -159,7 +162,7 @@ func getFiles(root string, exts []string) (*fsnotify.Watcher, []string) {
 	})
 	sort.Strings(files)
 	slog.Info("done parsing", "num_files", len(files))
-	return w, files
+	return w, files, nil
 }
 
 type stringsFlag []string
@@ -173,36 +176,37 @@ func (s *stringsFlag) Set(value string) error {
 	return nil
 }
 
-func main() {
+func mainImpl() error {
 	logger := slog.New(tint.NewHandler(colorable.NewColorable(os.Stderr), &tint.Options{
 		Level:      slog.LevelDebug,
 		TimeFormat: time.TimeOnly,
 		NoColor:    !isatty.IsTerminal(os.Stderr.Fd()),
 	}))
 	slog.SetDefault(logger)
-	port := flag.Int("port", 8010, "port number")
+	addr := flag.String("addr", ":8010", "address and port to listen to")
 	var extsArg stringsFlag
 	flag.Var(&extsArg, "e", "extensions")
 	root := flag.String("root", getWd(), "root directory")
 	flag.Parse()
 
 	if flag.NArg() != 0 {
-		fmt.Fprintf(os.Stderr, "Unexpected argument\n")
-		return
+		return errors.New("unexpected argument")
 	}
-
 	if len(extsArg) == 0 {
 		extsArg = []string{"m3u8", "mkv", "mp4", "ts"}
 	}
 	slog.Info("looking for files", "root", *root, "ext", strings.Join(extsArg, ","))
 	mu := sync.Mutex{}
-	wat, files := getFiles(*root, extsArg)
+	wat, files, err := getFiles(*root, extsArg)
+	if err != nil {
+		return err
+	}
 
 	go func() {
 		for {
 			e := <-wat.Events
 			slog.Info("event", "op", e.Op, "name", e.Name)
-			wat2, files2 := getFiles(*root, extsArg)
+			wat2, files2, _ := getFiles(*root, extsArg)
 			_ = wat.Close()
 			wat = wat2
 			mu.Lock()
@@ -267,13 +271,28 @@ func main() {
 		h.Set("Content-Type", "text/html; charset=utf-8")
 		_ = rootTmpl.Execute(w, files)
 	})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	s := &http.Server{
-		Addr:           fmt.Sprintf(":%d", *port),
-		Handler:        &m,
-		ReadTimeout:    10. * time.Second,
-		WriteTimeout:   time.Hour,
-		MaxHeaderBytes: http.DefaultMaxHeaderBytes,
+		Handler:      &m,
+		BaseContext:  func(net.Listener) context.Context { return ctx },
+		ReadTimeout:  10. * time.Second,
+		WriteTimeout: time.Hour,
 	}
-	slog.Info("serving", "port", *port)
-	_ = s.ListenAndServe()
+	l, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return err
+	}
+	slog.Info("serving", "addr", l.Addr())
+	go s.Serve(l)
+	<-ctx.Done()
+	s.Shutdown(context.Background())
+	return nil
+}
+
+func main() {
+	if err := mainImpl(); err != nil {
+		fmt.Fprintf(os.Stderr, "serve-videos: %s\n", err)
+		os.Exit(1)
+	}
 }
